@@ -86,7 +86,7 @@ npm run build
 | `SERVER_PORT` | `8080` | 后端端口 |
 | `GIN_MODE` | `debug` | Gin 模式 (debug/release) |
 | `DB_PATH` | `../data/rating.db` | SQLite 路径 |
-| `ADMIN_PASSWORD` | `admin123` | 管理员密码（支持 bcrypt 哈希） |
+| `ADMIN_PASSWORD` | `admin123456` | 管理员密码（必须为 bcrypt 哈希） |
 | `JWT_SECRET` | `rating-system-secret-key` | Token 签名密钥 |
 | `TOKEN_EXP` | `24` | Token 过期时间（小时） |
 
@@ -262,3 +262,10 @@ Rating变化 = (参与奖励 + 排名奖励 + 技能差异 + Top奖励) × 阻�
 - 删除比赛后需重算以更新 Rating
 - 学号前2位用于解析入学年级（如 23 表示 2023 级）
 - 生产环境务必修改 `ADMIN_PASSWORD` 和 `JWT_SECRET`
+- `ADMIN_PASSWORD` 需使用 bcrypt 哈希（例如 `$2a$...` 或 `bcrypt:` 前缀）
+
+生成 bcrypt 哈希示例（在 `backend` 目录执行）：
+
+```bash
+go run golang.org/x/crypto/bcrypt@latest admin123456
+```

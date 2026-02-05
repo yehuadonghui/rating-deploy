@@ -1,0 +1,7 @@
+#,user,email,class,name,student_id,solved_time,#1 title,#1 penalty
+1,user1,user1@example.com,Class A,Alice,2301001,"5
+01:23:45",A,10
+2,user2,user2@example.com,Class A,Bob,2301002,"4
+02:00:00",A,20
+3,user3,user3@example.com,Class B,Carol,2302001,"3
+02:30:00",A,30

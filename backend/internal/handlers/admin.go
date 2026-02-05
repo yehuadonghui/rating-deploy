@@ -43,6 +43,11 @@ func AdminLogin(c *gin.Context) {
 		return
 	}
 
+	if !isBcryptHash(adminConfig.Password) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "管理员密码未加密，请设置 bcrypt 哈希"})
+		return
+	}
+
 	var req struct {
 		Password string `json:"password" binding:"required"`
 	}
@@ -59,6 +64,7 @@ func AdminLogin(c *gin.Context) {
 	expiry := time.Duration(adminConfig.TokenExp) * time.Hour
 	claims := jwt.RegisteredClaims{
 		Subject:   "admin",
+		Issuer:    "rating-system",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 	}
@@ -456,14 +462,22 @@ func PreviewReplay(c *gin.Context) {
 
 func verifyAdminPassword(plain, stored string) bool {
 	stored = strings.TrimSpace(stored)
-	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
-		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(plain)) == nil
-	}
 	if strings.HasPrefix(stored, "bcrypt:") {
 		hash := strings.TrimPrefix(stored, "bcrypt:")
 		return bcrypt.CompareHashAndPassword([]byte(hash), []byte(plain)) == nil
 	}
-	return plain == stored
+	if strings.HasPrefix(stored, "$2a$") || strings.HasPrefix(stored, "$2b$") || strings.HasPrefix(stored, "$2y$") {
+		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(plain)) == nil
+	}
+	return false
+}
+
+func isBcryptHash(stored string) bool {
+	stored = strings.TrimSpace(stored)
+	return strings.HasPrefix(stored, "bcrypt:") ||
+		strings.HasPrefix(stored, "$2a$") ||
+		strings.HasPrefix(stored, "$2b$") ||
+		strings.HasPrefix(stored, "$2y$")
 }
 
 type ipRateLimiter struct {
