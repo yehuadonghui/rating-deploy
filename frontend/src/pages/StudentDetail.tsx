@@ -1,15 +1,34 @@
-﻿import { Alert, Card, Descriptions, Table } from "antd"
+import { Alert, Card, Descriptions, Table } from "antd"
 import { useEffect, useMemo, useState } from "react"
 import { useParams } from "react-router-dom"
 import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 import { publicApi } from "../api/public"
 import Loading from "../components/Loading"
-import type { Result, Student } from "../types"
+import type { PointCategory, PointRecord, Result, Student } from "../types"
 
 type StudentResponse = {
   student: Student
   tier_name: string
   tier_color: string
+}
+
+type StudentPointsResponse = {
+  student_id: string
+  redeem_points: number
+  point_records: PointRecord[]
+}
+
+const pointCategoryLabel = (value?: PointCategory) => {
+  switch (value) {
+    case "contest_award":
+      return "比赛奖励"
+    case "progress_award":
+      return "进步奖"
+    case "organizer_reward":
+      return "组织工作积分"
+    default:
+      return "-"
+  }
 }
 
 export default function StudentDetail() {
@@ -18,14 +37,19 @@ export default function StudentDetail() {
   const [error, setError] = useState<string | null>(null)
   const [student, setStudent] = useState<StudentResponse | null>(null)
   const [history, setHistory] = useState<Result[]>([])
+  const [redeemPoints, setRedeemPoints] = useState(0)
+  const [pointRecords, setPointRecords] = useState<PointRecord[]>([])
 
   useEffect(() => {
     if (!id) return
     setLoading(true)
-    Promise.all([publicApi.getStudent(id), publicApi.getStudentHistory(id)])
-      .then(([studentRes, historyRes]) => {
+    Promise.all([publicApi.getStudent(id), publicApi.getStudentHistory(id), publicApi.getStudentPoints(id)])
+      .then(([studentRes, historyRes, pointsRes]) => {
         setStudent(studentRes.data)
         setHistory(historyRes.data || [])
+        const pointPayload = pointsRes.data as StudentPointsResponse
+        setRedeemPoints(Number(pointPayload.redeem_points || 0))
+        setPointRecords(pointPayload.point_records || [])
       })
       .catch(() => setError("获取学生信息失败"))
       .finally(() => setLoading(false))
@@ -62,6 +86,8 @@ export default function StudentDetail() {
         <Descriptions.Item label="最高 Rating">
           {Math.round(student.student.max_rating)}
         </Descriptions.Item>
+        <Descriptions.Item label="兑奖积分">{redeemPoints}</Descriptions.Item>
+        <Descriptions.Item label="参赛次数">{student.student.match_count}</Descriptions.Item>
         <Descriptions.Item label="段位" span={2}>
           <span style={{ color: student.tier_color || "#333" }}>{student.tier_name || "-"}</span>
         </Descriptions.Item>
@@ -82,7 +108,7 @@ export default function StudentDetail() {
         )}
       </Card>
 
-      <Card title="比赛记录">
+      <Card title="比赛记录" style={{ marginBottom: 16 }}>
         <Table
           rowKey="id"
           dataSource={history}
@@ -92,15 +118,41 @@ export default function StudentDetail() {
             {
               title: "日期",
               dataIndex: ["contest", "date"],
-              render: (value) => (value ? new Date(value).toLocaleDateString() : "-") ,
+              render: (value) => (value ? new Date(value).toLocaleDateString() : "-"),
             },
             { title: "排名", dataIndex: "rank" },
             { title: "解题数", dataIndex: "solved" },
             {
               title: "Rating",
-              render: (_, record) => `${Math.round(record.rating_before || 0)} → ${Math.round(record.rating_after || 0)}`,
+              render: (_, record) =>
+                `${Math.round(record.rating_before || 0)} → ${Math.round(record.rating_after || 0)}`,
             },
             { title: "变化", dataIndex: "delta", render: (value) => Math.round(value || 0) },
+          ]}
+        />
+      </Card>
+
+      <Card title="兑奖积分明细">
+        <Table
+          rowKey="id"
+          dataSource={pointRecords}
+          pagination={false}
+          locale={{ emptyText: "暂无兑奖积分记录" }}
+          columns={[
+            { title: "分值", dataIndex: "points", render: (value: number) => `+${value}` },
+            { title: "标题", dataIndex: "title" },
+            {
+              title: "类型",
+              dataIndex: "category",
+              render: (value: PointCategory) => pointCategoryLabel(value),
+            },
+            { title: "说明", dataIndex: "description", render: (value: string) => value || "-" },
+            { title: "关联比赛", render: (_, record: PointRecord) => record.contest?.name || "-" },
+            {
+              title: "时间",
+              dataIndex: "created_at",
+              render: (value: string) => (value ? new Date(value).toLocaleString() : "-"),
+            },
           ]}
         />
       </Card>

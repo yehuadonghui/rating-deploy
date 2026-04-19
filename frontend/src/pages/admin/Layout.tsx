@@ -12,6 +12,7 @@ export default function AdminLayout() {
   const items = [
     { key: "/admin/contests", label: <Link to="/admin/contests">比赛管理</Link> },
     { key: "/admin/students", label: <Link to="/admin/students">学生管理</Link> },
+    { key: "/admin/points", label: <Link to="/admin/points">积分流水</Link> },
     { key: "/admin/lab", label: <Link to="/admin/lab">算法实验室</Link> },
     { key: "/admin/tiers", label: <Link to="/admin/tiers">段位配置</Link> },
     { key: "/admin/site", label: <Link to="/admin/site">网站配置</Link> },

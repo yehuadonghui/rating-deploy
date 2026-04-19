@@ -18,6 +18,7 @@ func Migrate() error {
 	err := DB.AutoMigrate(
 		&models.Student{},
 		&models.Contest{},
+		&models.PointRecord{},
 		&models.SystemConfig{},
 		&models.TierConfig{},
 	)
@@ -52,6 +53,7 @@ func ensureBaseTables() error {
 				current_rating REAL DEFAULT 0,
 				max_rating REAL DEFAULT 0,
 				match_count INTEGER DEFAULT 0,
+				redeem_points INTEGER DEFAULT 0,
 				created_at DATETIME,
 				updated_at DATETIME
 			)
@@ -72,6 +74,22 @@ func ensureBaseTables() error {
 			rating_before REAL,
 			rating_after REAL,
 			delta REAL,
+			created_at DATETIME
+		)
+	`).Error; err != nil {
+		return err
+	}
+
+	if err := DB.Exec(`
+		CREATE TABLE IF NOT EXISTS point_records (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			student_id TEXT NOT NULL,
+			contest_id INTEGER,
+			category TEXT NOT NULL,
+			source TEXT NOT NULL,
+			points INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT,
 			created_at DATETIME
 		)
 	`).Error; err != nil {

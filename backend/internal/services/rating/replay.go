@@ -3,6 +3,7 @@ package rating
 import (
 	"context"
 	"log"
+	"math"
 	"strconv"
 	"sync"
 
@@ -11,7 +12,7 @@ import (
 	"rating-system/internal/models"
 )
 
-// ReplayProgress 重算进度
+// ReplayProgress tracks replay status for polling.
 type ReplayProgress struct {
 	CurrentContest int    `json:"current_contest"`
 	TotalContests  int    `json:"total_contests"`
@@ -19,7 +20,7 @@ type ReplayProgress struct {
 	Status         string `json:"status"` // processing, completed, error
 }
 
-// ReplayEngine 重算引擎
+// ReplayEngine recalculates all historical ratings.
 type ReplayEngine struct {
 	db         *gorm.DB
 	calculator RatingCalculator
@@ -29,7 +30,7 @@ type ReplayEngine struct {
 	progress   ReplayProgress
 }
 
-// NewReplayEngine 创建重算引擎
+// NewReplayEngine creates a replay engine with default config.
 func NewReplayEngine(db *gorm.DB, calculator RatingCalculator) *ReplayEngine {
 	return &ReplayEngine{
 		db:         db,
@@ -38,12 +39,12 @@ func NewReplayEngine(db *gorm.DB, calculator RatingCalculator) *ReplayEngine {
 	}
 }
 
-// SetConfig 设置配置
+// SetConfig overrides the replay config.
 func (e *ReplayEngine) SetConfig(config RatingConfig) {
 	e.config = config
 }
 
-// LoadConfigFromDB 从数据库加载配置
+// LoadConfigFromDB loads persisted replay config.
 func (e *ReplayEngine) LoadConfigFromDB() error {
 	var configs []models.SystemConfig
 	if err := e.db.Find(&configs).Error; err != nil {
@@ -78,17 +79,18 @@ func (e *ReplayEngine) LoadConfigFromDB() error {
 			}
 		}
 	}
+
 	return nil
 }
 
-// IsRunning 检查是否正在运行
+// IsRunning reports whether a replay is active.
 func (e *ReplayEngine) IsRunning() bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.isRunning
 }
 
-// Progress 获取当前进度快照
+// Progress returns the latest replay progress snapshot.
 func (e *ReplayEngine) Progress() ReplayProgress {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -101,7 +103,7 @@ func (e *ReplayEngine) setProgress(p ReplayProgress) {
 	e.mu.Unlock()
 }
 
-// ReplayAll 全量重算
+// ReplayAll recalculates ratings for every contest in chronological order.
 func (e *ReplayEngine) ReplayAll(ctx context.Context, progressCh chan<- ReplayProgress) error {
 	e.mu.Lock()
 	if e.isRunning {
@@ -117,14 +119,12 @@ func (e *ReplayEngine) ReplayAll(ctx context.Context, progressCh chan<- ReplayPr
 		e.mu.Unlock()
 	}()
 
-	// 加载最新配置
 	if err := e.LoadConfigFromDB(); err != nil {
 		return err
 	}
 
 	return e.db.Transaction(func(tx *gorm.DB) error {
-		// 1. 重置所有学生 Rating
-		log.Println("重置所有学生 Rating...")
+		log.Println("resetting all student ratings")
 		if err := tx.Model(&models.Student{}).Where("1=1").Updates(map[string]interface{}{
 			"current_rating": 0,
 			"max_rating":     0,
@@ -133,25 +133,20 @@ func (e *ReplayEngine) ReplayAll(ctx context.Context, progressCh chan<- ReplayPr
 			return err
 		}
 
-		// 2. 加载所有比赛（按时间排序）
 		var contests []models.Contest
 		if err := tx.Order("date ASC").Find(&contests).Error; err != nil {
 			return err
 		}
 
 		if len(contests) == 0 {
-			e.setProgress(ReplayProgress{
-				Status: "completed",
-			})
+			completed := ReplayProgress{Status: "completed"}
+			e.setProgress(completed)
 			if progressCh != nil {
-				progressCh <- ReplayProgress{
-					Status: "completed",
-				}
+				progressCh <- completed
 			}
 			return nil
 		}
 
-		// 3. 逐场处理
 		for i, contest := range contests {
 			select {
 			case <-ctx.Done():
@@ -170,8 +165,11 @@ func (e *ReplayEngine) ReplayAll(ctx context.Context, progressCh chan<- ReplayPr
 				progressCh <- current
 			}
 
-			if err := e.processContest(tx, &contest); err != nil {
-				log.Printf("处理比赛 %s 失败: %v", contest.Name, err)
+			effectiveContest := contest
+			effectiveContest.Weight = e.decayedContestWeight(contest.Weight, i, len(contests))
+
+			if err := e.processContest(tx, &effectiveContest); err != nil {
+				log.Printf("process contest %s failed: %v", contest.Name, err)
 				e.setProgress(ReplayProgress{
 					CurrentContest: i + 1,
 					TotalContests:  len(contests),
@@ -196,19 +194,15 @@ func (e *ReplayEngine) ReplayAll(ctx context.Context, progressCh chan<- ReplayPr
 	})
 }
 
-// processContest 处理单场比赛
 func (e *ReplayEngine) processContest(tx *gorm.DB, contest *models.Contest) error {
-	// 加载该比赛的所有结果
 	var results []models.Result
 	if err := tx.Where("contest_id = ?", contest.ID).Find(&results).Error; err != nil {
 		return err
 	}
-
 	if len(results) == 0 {
 		return nil
 	}
 
-	// 获取参赛者当前 Rating
 	studentIDs := make([]string, len(results))
 	for i, r := range results {
 		studentIDs[i] = r.StudentID
@@ -219,12 +213,11 @@ func (e *ReplayEngine) processContest(tx *gorm.DB, contest *models.Contest) erro
 		return err
 	}
 
-	studentMap := make(map[string]*models.Student)
+	studentMap := make(map[string]*models.Student, len(students))
 	for i := range students {
 		studentMap[students[i].StudentID] = &students[i]
 	}
 
-	// 构建参赛者列表
 	var participants []Participant
 	for _, r := range results {
 		student := studentMap[r.StudentID]
@@ -239,26 +232,23 @@ func (e *ReplayEngine) processContest(tx *gorm.DB, contest *models.Contest) erro
 		})
 	}
 
-	// 计算 Rating 变化
 	changes, err := e.calculator.Calculate(context.Background(), contest, participants, e.config)
 	if err != nil {
 		return err
 	}
 
-	// 更新结果和学生 Rating
-	changeMap := make(map[string]RatingChange)
-	for _, c := range changes {
-		changeMap[c.StudentID] = c
+	changeMap := make(map[string]RatingChange, len(changes))
+	for _, change := range changes {
+		changeMap[change.StudentID] = change
 	}
 
-	for _, r := range results {
-		change, ok := changeMap[r.StudentID]
+	for _, result := range results {
+		change, ok := changeMap[result.StudentID]
 		if !ok {
 			continue
 		}
 
-		// 更新 Result
-		if err := tx.Model(&r).Updates(map[string]interface{}{
+		if err := tx.Model(&result).Updates(map[string]interface{}{
 			"performance":   change.Performance,
 			"rating_before": change.RatingBefore,
 			"rating_after":  change.RatingAfter,
@@ -267,28 +257,29 @@ func (e *ReplayEngine) processContest(tx *gorm.DB, contest *models.Contest) erro
 			return err
 		}
 
-		// 更新 Student
-		student := studentMap[r.StudentID]
-		if student != nil {
-			student.UpdateRating(change.RatingAfter)
-			student.MatchCount++
-			if err := tx.Model(student).Updates(map[string]interface{}{
-				"current_rating": student.CurrentRating,
-				"max_rating":     student.MaxRating,
-				"match_count":    student.MatchCount,
-			}).Error; err != nil {
-				return err
-			}
+		student := studentMap[result.StudentID]
+		if student == nil {
+			continue
+		}
+
+		student.UpdateRating(change.RatingAfter)
+		student.MatchCount++
+		if err := tx.Model(student).Updates(map[string]interface{}{
+			"current_rating": student.CurrentRating,
+			"max_rating":     student.MaxRating,
+			"match_count":    student.MatchCount,
+		}).Error; err != nil {
+			return err
 		}
 	}
 
 	return nil
 }
 
-// ErrReplayInProgress 重算正在进行中
-var ErrReplayInProgress = &ReplayError{Message: "重算正在进行中，请稍后再试"}
+// ErrReplayInProgress is returned when another replay is already running.
+var ErrReplayInProgress = &ReplayError{Message: "replay is already running"}
 
-// ReplayError 重算错误
+// ReplayError represents replay-specific failures.
 type ReplayError struct {
 	Message string
 }
@@ -297,7 +288,7 @@ func (e *ReplayError) Error() string {
 	return e.Message
 }
 
-// PreviewStudent 预览学生结果
+// PreviewStudent is the in-memory replay result for one student.
 type PreviewStudent struct {
 	StudentID     string  `json:"student_id"`
 	Name          string  `json:"name"`
@@ -307,12 +298,10 @@ type PreviewStudent struct {
 	MatchCount    int     `json:"match_count"`
 }
 
-// PreviewAll 预览全量重算结果（不保存到数据库）
+// PreviewAll simulates ReplayAll without persisting changes.
 func (e *ReplayEngine) PreviewAll(ctx context.Context) ([]PreviewStudent, error) {
-	// 内存中模拟学生状态
 	studentRatings := make(map[string]*PreviewStudent)
 
-	// 加载所有学生
 	var students []models.Student
 	if err := e.db.Find(&students).Error; err != nil {
 		return nil, err
@@ -329,31 +318,29 @@ func (e *ReplayEngine) PreviewAll(ctx context.Context) ([]PreviewStudent, error)
 		}
 	}
 
-	// 加载所有比赛（按时间排序）
 	var contests []models.Contest
 	if err := e.db.Order("date ASC").Find(&contests).Error; err != nil {
 		return nil, err
 	}
 
-	// 逐场处理
-	for _, contest := range contests {
+	for i, contest := range contests {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		default:
 		}
 
-		// 加载该比赛的所有结果
+		effectiveContest := contest
+		effectiveContest.Weight = e.decayedContestWeight(contest.Weight, i, len(contests))
+
 		var results []models.Result
 		if err := e.db.Where("contest_id = ?", contest.ID).Find(&results).Error; err != nil {
 			return nil, err
 		}
-
 		if len(results) == 0 {
 			continue
 		}
 
-		// 构建参赛者列表
 		var participants []Participant
 		for _, r := range results {
 			student := studentRatings[r.StudentID]
@@ -368,36 +355,32 @@ func (e *ReplayEngine) PreviewAll(ctx context.Context) ([]PreviewStudent, error)
 			})
 		}
 
-		// 计算 Rating 变化
-		changes, err := e.calculator.Calculate(ctx, &contest, participants, e.config)
+		changes, err := e.calculator.Calculate(ctx, &effectiveContest, participants, e.config)
 		if err != nil {
 			return nil, err
 		}
 
-		// 更新内存中的学生状态
-		for _, c := range changes {
-			student := studentRatings[c.StudentID]
-			if student != nil {
-				if c.RatingAfter > student.CurrentRating {
-					student.CurrentRating = c.RatingAfter
-					if c.RatingAfter > student.MaxRating {
-						student.MaxRating = c.RatingAfter
-					}
-				}
-				student.MatchCount++
+		for _, change := range changes {
+			student := studentRatings[change.StudentID]
+			if student == nil {
+				continue
 			}
+
+			student.CurrentRating = change.RatingAfter
+			if change.RatingAfter > student.MaxRating {
+				student.MaxRating = change.RatingAfter
+			}
+			student.MatchCount++
 		}
 	}
 
-	// 转换为切片并按 Rating 排序
 	var result []PreviewStudent
-	for _, s := range studentRatings {
-		if s.MatchCount > 0 {
-			result = append(result, *s)
+	for _, student := range studentRatings {
+		if student.MatchCount > 0 {
+			result = append(result, *student)
 		}
 	}
 
-	// 按 Rating 降序排序
 	for i := 0; i < len(result)-1; i++ {
 		for j := i + 1; j < len(result); j++ {
 			if result[j].CurrentRating > result[i].CurrentRating {
@@ -407,4 +390,25 @@ func (e *ReplayEngine) PreviewAll(ctx context.Context) ([]PreviewStudent, error)
 	}
 
 	return result, nil
+}
+
+func (e *ReplayEngine) decayedContestWeight(baseWeight float64, contestIndex int, totalContests int) float64 {
+	if baseWeight <= 0 {
+		baseWeight = 1
+	}
+	if totalContests <= 1 {
+		return baseWeight
+	}
+
+	decay := e.config.HistoryDecay
+	if decay <= 0 {
+		return baseWeight
+	}
+
+	remainingContests := totalContests - contestIndex - 1
+	if remainingContests <= 0 {
+		return baseWeight
+	}
+
+	return baseWeight * math.Pow(decay, float64(remainingContests))
 }

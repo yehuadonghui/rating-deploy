@@ -141,9 +141,19 @@ export default function Leaderboard() {
           { title: "班级", dataIndex: "class", render: (value) => value || "-" },
           { title: "年级", dataIndex: "grade", render: (value) => (value ? `20${value}级` : "-") },
           { title: "Rating", dataIndex: "current_rating", render: (value) => Math.round(value) },
+          { title: "兑奖积分", dataIndex: "redeem_points", render: (value) => value || 0 },
+          {
+            title: "段位",
+            dataIndex: "tier_name",
+            render: (_value, record) => (
+              <span style={{ color: record.tier_color || "#333" }}>{record.tier_name || "-"}</span>
+            ),
+          },
           { title: "参赛次数", dataIndex: "match_count" },
         ]}
       />
     </div>
   )
 }
+
+

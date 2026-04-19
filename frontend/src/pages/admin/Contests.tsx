@@ -1,15 +1,44 @@
-import { Alert, Button, DatePicker, Form, Input, InputNumber, Modal, Popconfirm, Progress, Space, Table, message } from "antd"
+import {
+  Alert,
+  Button,
+  DatePicker,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
+  Progress,
+  Select,
+  Space,
+  Table,
+  Tag,
+  message,
+} from "antd"
 import dayjs from "dayjs"
 import { useEffect, useMemo, useState } from "react"
 import { adminApi } from "../../api/admin"
 import { publicApi } from "../../api/public"
 import Loading from "../../components/Loading"
-import type { Contest } from "../../types"
+import type { Contest, ContestRewardType } from "../../types"
 
 type ContestFormValues = {
   name: string
   date?: dayjs.Dayjs
   weight?: number
+  reward_type?: ContestRewardType
+}
+
+const rewardTypeOptions: Array<{ value: ContestRewardType; label: string; color?: string }> = [
+  { value: "none", label: "不计兑奖积分" },
+  { value: "foundation_exam", label: "强基月考", color: "blue" },
+  { value: "brand_monthly", label: "品牌月赛", color: "green" },
+  { value: "brand_final", label: "品牌决赛", color: "gold" },
+]
+
+function renderRewardType(value?: ContestRewardType) {
+  const matched = rewardTypeOptions.find((item) => item.value === (value || "none"))
+  if (!matched) return "-"
+  return matched.color ? <Tag color={matched.color}>{matched.label}</Tag> : matched.label
 }
 
 export default function AdminContests() {
@@ -50,6 +79,11 @@ export default function AdminContests() {
         render: (value: string) => (value ? dayjs(value).format("YYYY-MM-DD") : "-"),
       },
       { title: "权重", dataIndex: "weight" },
+      {
+        title: "兑奖类型",
+        dataIndex: "reward_type",
+        render: (value: ContestRewardType) => renderRewardType(value),
+      },
       { title: "参赛人数", dataIndex: "participant_count" },
       {
         title: "操作",
@@ -58,14 +92,18 @@ export default function AdminContests() {
             <Button
               onClick={() => {
                 setEditTarget(record)
-                editForm.setFieldsValue({ name: record.name, weight: record.weight })
+                editForm.setFieldsValue({
+                  name: record.name,
+                  weight: record.weight,
+                  reward_type: record.reward_type || "none",
+                })
               }}
             >
               编辑
             </Button>
             <Popconfirm
               title="确定删除该比赛吗？"
-              description="删除后需要重新重算 Rating"
+              description="删除后会同时移除该场自动兑奖积分，并需要重新计算 Rating。"
               onConfirm={async () => {
                 try {
                   await adminApi.deleteContest(record.id)
@@ -115,6 +153,8 @@ export default function AdminContests() {
           if (values.weight !== undefined) {
             formData.append("weight", String(values.weight))
           }
+          formData.append("reward_type", values.reward_type || "none")
+
           setUploading(true)
           setUploadProgress(null)
           try {
@@ -143,6 +183,9 @@ export default function AdminContests() {
         <Form.Item label="权重" name="weight" initialValue={1}>
           <InputNumber min={0.1} step={0.1} />
         </Form.Item>
+        <Form.Item label="兑奖类型" name="reward_type" initialValue="none">
+          <Select style={{ width: 180 }} options={rewardTypeOptions} />
+        </Form.Item>
         <Form.Item label="CSV 文件" required>
           <input
             key={fileInputKey}
@@ -160,6 +203,7 @@ export default function AdminContests() {
           </Button>
         </Form.Item>
       </Form>
+
       {uploading && uploadProgress !== null ? (
         <div style={{ maxWidth: 420, marginBottom: 16 }}>
           <Progress percent={uploadProgress} />
@@ -179,6 +223,7 @@ export default function AdminContests() {
             await adminApi.updateContest(editTarget.id, {
               name: values.name,
               weight: values.weight,
+              reward_type: values.reward_type,
             })
             message.success("比赛更新成功")
             setEditTarget(null)
@@ -194,6 +239,9 @@ export default function AdminContests() {
           </Form.Item>
           <Form.Item label="权重" name="weight" rules={[{ required: true, message: "请输入权重" }]}>
             <InputNumber min={0.1} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item label="兑奖类型" name="reward_type" rules={[{ required: true, message: "请选择兑奖类型" }]}>
+            <Select options={rewardTypeOptions} />
           </Form.Item>
         </Form>
       </Modal>

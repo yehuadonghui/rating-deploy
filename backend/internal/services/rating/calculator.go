@@ -65,10 +65,45 @@ func (c *EloMMRCalculator) Calculate(
 		expectedRankMap[p.StudentID] = float64(i + 1)
 	}
 
+	// 处理并列名次：相同名次的选手使用“占用名次区间”的平均值
+	actualRankMap := make(map[string]float64, len(participants))
+	sortedByRank := make([]Participant, len(participants))
+	copy(sortedByRank, participants)
+	sort.Slice(sortedByRank, func(i, j int) bool {
+		return sortedByRank[i].Rank < sortedByRank[j].Rank
+	})
+
+	pos := 1
+	for i := 0; i < len(sortedByRank); {
+		rank := sortedByRank[i].Rank
+		if rank <= 0 {
+			rank = 1
+		}
+		j := i + 1
+		for j < len(sortedByRank) {
+			nextRank := sortedByRank[j].Rank
+			if nextRank <= 0 {
+				nextRank = 1
+			}
+			if nextRank != rank {
+				break
+			}
+			j++
+		}
+		startPos := pos
+		endPos := pos + (j - i) - 1
+		avgPos := float64(startPos+endPos) / 2.0
+		for k := i; k < j; k++ {
+			actualRankMap[sortedByRank[k].StudentID] = avgPos
+		}
+		pos += (j - i)
+		i = j
+	}
+
 	var changes []RatingChange
 
 	for _, p := range participants {
-		actualRank := float64(p.Rank)
+		actualRank := actualRankMap[p.StudentID]
 		expectedRank := expectedRankMap[p.StudentID]
 
 		if actualRank <= 0 {

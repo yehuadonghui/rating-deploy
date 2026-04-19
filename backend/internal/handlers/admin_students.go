@@ -8,9 +8,9 @@ import (
 
 	"rating-system/internal/database"
 	"rating-system/internal/models"
+	"rating-system/internal/services/points"
 )
 
-// AdminListStudents 管理端获取学生列表
 func AdminListStudents(c *gin.Context) {
 	page := 1
 	size := 20
@@ -26,10 +26,8 @@ func AdminListStudents(c *gin.Context) {
 	}
 
 	queryStr := c.Query("query")
-
 	db := database.GetDB()
 	query := db.Model(&models.Student{})
-
 	if queryStr != "" {
 		like := "%" + queryStr + "%"
 		query = query.Where(
@@ -42,10 +40,7 @@ func AdminListStudents(c *gin.Context) {
 	query.Count(&total)
 
 	var students []models.Student
-	query.Order("updated_at DESC").
-		Offset((page - 1) * size).
-		Limit(size).
-		Find(&students)
+	query.Order("updated_at DESC").Offset((page - 1) * size).Limit(size).Find(&students)
 
 	c.JSON(http.StatusOK, gin.H{
 		"total": total,
@@ -55,7 +50,6 @@ func AdminListStudents(c *gin.Context) {
 	})
 }
 
-// AdminCreateStudent 管理端新增学生
 func AdminCreateStudent(c *gin.Context) {
 	var req struct {
 		StudentID string `json:"student_id" binding:"required"`
@@ -90,7 +84,6 @@ func AdminCreateStudent(c *gin.Context) {
 		Class:     req.Class,
 		Grade:     grade,
 	}
-
 	if err := db.Create(&student).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建学生失败"})
 		return
@@ -99,7 +92,6 @@ func AdminCreateStudent(c *gin.Context) {
 	c.JSON(http.StatusOK, student)
 }
 
-// AdminUpdateStudent 管理端更新学生
 func AdminUpdateStudent(c *gin.Context) {
 	id := c.Param("id")
 
@@ -127,7 +119,6 @@ func AdminUpdateStudent(c *gin.Context) {
 	if req.Grade != nil {
 		updates["grade"] = *req.Grade
 	}
-
 	if len(updates) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "没有可更新字段"})
 		return
@@ -148,11 +139,62 @@ func AdminUpdateStudent(c *gin.Context) {
 	c.JSON(http.StatusOK, student)
 }
 
-// AdminDeleteStudent 管理端删除学生
+func AdminCreateStudentPointRecord(c *gin.Context) {
+	studentID := c.Param("id")
+
+	var req struct {
+		Category    models.PointCategory `json:"category" binding:"required"`
+		Points      int                  `json:"points" binding:"required"`
+		Title       string               `json:"title" binding:"required"`
+		Description string               `json:"description"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求参数错误"})
+		return
+	}
+	if req.Points <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "积分必须大于 0"})
+		return
+	}
+	if req.Category != models.PointCategoryProgressAward && req.Category != models.PointCategoryOrganizerReward {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "仅支持手工录入进步奖或组织工作积分"})
+		return
+	}
+
+	db := database.GetDB()
+	var student models.Student
+	if err := db.First(&student, "student_id = ?", studentID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "学生不存在"})
+		return
+	}
+
+	record := models.PointRecord{
+		StudentID:   studentID,
+		Category:    req.Category,
+		Points:      req.Points,
+		Title:       req.Title,
+		Description: req.Description,
+	}
+	if err := points.NewService(db).CreateManualRecord(&record); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分录入失败"})
+		return
+	}
+	if err := db.First(&student, "student_id = ?", studentID).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "积分录入失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"record":  record,
+		"student": student,
+	})
+}
+
 func AdminDeleteStudent(c *gin.Context) {
 	id := c.Param("id")
 
 	db := database.GetDB()
+	db.Where("student_id = ?", id).Delete(&models.PointRecord{})
 	db.Where("student_id = ?", id).Delete(&models.Result{})
 	if err := db.Delete(&models.Student{}, "student_id = ?", id).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除学生失败"})
@@ -160,6 +202,17 @@ func AdminDeleteStudent(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "删除成功"})
+}
+
+func AdminDeleteAllStudents(c *gin.Context) {
+	db := database.GetDB()
+	db.Exec("DELETE FROM point_records")
+	db.Exec("DELETE FROM results")
+	if err := db.Exec("DELETE FROM students").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除学生失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "已删除全部学生"})
 }
 
 func parseIntParamAdmin(s string) (int, error) {

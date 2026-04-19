@@ -7,6 +7,7 @@ export const publicApi = {
     client.get("/students", { params }),
   getStudent: (id: string) => client.get(`/students/${id}`),
   getStudentHistory: (id: string) => client.get(`/students/${id}/history`),
+  getStudentPoints: (id: string) => client.get(`/students/${id}/points`),
   getContests: () => client.get("/contests"),
   getTiers: () => client.get("/tiers"),
   getStatistics: () => client.get("/statistics"),

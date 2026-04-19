@@ -6,11 +6,13 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
 	"rating-system/internal/models"
 )
 
-// HydroParser Hydro OJ CSV 解析器
+// HydroParser parses Hydro OJ CSV exports.
 type HydroParser struct{}
 
 func init() {
@@ -21,57 +23,68 @@ func (p *HydroParser) Platform() string {
 	return "hydro"
 }
 
-// Parse 解析 Hydro OJ 导出的 CSV 文件
-// CSV 格式：#,用户,电子邮件,学校,名称,学号,"解决\n总耗时",#1 题目名,#1 罚时（分钟）,...
+// Parse reads Hydro OJ CSV export.
+// CSV format: #,用户,电子邮件,学校,名称,学号,"解决\n总耗时",#1 题目名,#1 罚时（分钟）,...
 func (p *HydroParser) Parse(reader io.Reader) ([]ContestEntry, error) {
-	// 读取全部内容以处理 BOM
+	// Read all to handle BOM and encoding.
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, err
 	}
 
-	// 去除 UTF-8 BOM
+	// Remove UTF-8 BOM if present.
 	data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
 
-	csvReader := csv.NewReader(bytes.NewReader(data))
-	csvReader.FieldsPerRecord = -1 // 允许不同行有不同数量的字段
-	csvReader.LazyQuotes = true    // 宽松引号处理
+	// Decode GBK/GB18030 if data is not valid UTF-8.
+	if !utf8.Valid(data) {
+		if decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data); err == nil {
+			data = decoded
+		}
+	} else if !looksLikeHydroHeader(data) {
+		// UTF-8 is valid but likely mis-decoded GBK. Try GB18030 and verify header.
+		if decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data); err == nil {
+			if looksLikeHydroHeader(decoded) {
+				data = decoded
+			}
+		}
+	}
 
-	// 读取所有行
+	csvReader := csv.NewReader(bytes.NewReader(data))
+	csvReader.FieldsPerRecord = -1 // allow variable fields per row
+	csvReader.LazyQuotes = true
+
 	records, err := csvReader.ReadAll()
 	if err != nil {
 		return nil, err
 	}
 
 	if len(records) < 2 {
-		return nil, nil // 只有表头或空文件
+		return nil, nil // header only or empty
 	}
 
 	var entries []ContestEntry
 
-	// 跳过表头，从第二行开始
+	// Skip header row.
 	for _, record := range records[1:] {
 		if len(record) < 7 {
 			continue
 		}
 
-		// 解析排名
 		rank, err := strconv.Atoi(strings.TrimSpace(record[0]))
 		if err != nil {
 			continue
 		}
 
-		// 解析学号（去除空格）
-		studentID := strings.TrimSpace(record[5])
+		// Student ID: use 学号; fallback to 用户 if empty.
+		studentID := normalizeID(record[5])
 		if studentID == "" {
-			// 学号为空时，回退使用用户名作为唯一标识
-			studentID = strings.TrimSpace(record[1])
+			studentID = normalizeID(record[1])
 			if studentID == "" {
 				continue
 			}
 		}
 
-		// 解析 "解决\n总耗时" 字段，格式如 "10\n17:40"
+		// "解决\n总耗时" like "10\n17:40"
 		solvedTimeStr := strings.TrimSpace(record[6])
 		parts := strings.Split(solvedTimeStr, "\n")
 		if len(parts) < 1 {
@@ -81,11 +94,6 @@ func (p *HydroParser) Parse(reader io.Reader) ([]ContestEntry, error) {
 		solved, err := strconv.Atoi(strings.TrimSpace(parts[0]))
 		if err != nil {
 			solved = 0
-		}
-
-		// 过滤爆0记录
-		if solved == 0 {
-			continue
 		}
 
 		totalTime := ""
@@ -107,4 +115,26 @@ func (p *HydroParser) Parse(reader io.Reader) ([]ContestEntry, error) {
 	}
 
 	return entries, nil
+}
+
+func looksLikeHydroHeader(data []byte) bool {
+	line := string(data)
+	if idx := strings.Index(line, "\n"); idx >= 0 {
+		line = line[:idx]
+	}
+	line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+	return strings.Contains(line, "用户") &&
+		strings.Contains(line, "电子邮件") &&
+		strings.Contains(line, "学号")
+}
+
+func normalizeID(value string) string {
+	s := strings.TrimSpace(value)
+	if strings.HasPrefix(s, "=\"") && strings.HasSuffix(s, "\"") && len(s) >= 3 {
+		s = s[2 : len(s)-1]
+	}
+	if strings.HasPrefix(s, "'") {
+		s = strings.TrimPrefix(s, "'")
+	}
+	return strings.TrimSpace(s)
 }

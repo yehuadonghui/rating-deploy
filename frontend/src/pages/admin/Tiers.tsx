@@ -68,12 +68,9 @@ export default function AdminTiers() {
       },
       {
         title: "操作",
-        render: (_: unknown, record: TierConfig, index: number) => (
+        render: (_: unknown, __: TierConfig, index: number) => (
           <Space>
-            <Popconfirm
-              title="确定删除该段位吗？"
-              onConfirm={() => setTiers((prev) => prev.filter((_item, idx) => idx !== index))}
-            >
+            <Popconfirm title="确定删除该段位吗？" onConfirm={() => setTiers((prev) => prev.filter((_item, idx) => idx !== index))}>
               <Button danger>删除</Button>
             </Popconfirm>
           </Space>
@@ -130,7 +127,12 @@ export default function AdminTiers() {
           保存配置
         </Button>
       </Space>
-      <Table rowKey={(record) => `${record.id || "new"}-${record.name}`} columns={columns} dataSource={tiers} pagination={false} />
+      <Table
+        rowKey={(record) => `${record.id || "new"}-${record.name}`}
+        columns={columns}
+        dataSource={tiers}
+        pagination={false}
+      />
     </div>
   )
 }

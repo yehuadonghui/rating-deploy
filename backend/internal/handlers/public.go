@@ -8,6 +8,7 @@ import (
 
 	"rating-system/internal/database"
 	"rating-system/internal/models"
+	"rating-system/internal/services/points"
 )
 
 // GetLeaderboard 获取排行榜
@@ -147,6 +148,29 @@ func GetStudentHistory(c *gin.Context) {
 		Find(&results)
 
 	c.JSON(http.StatusOK, results)
+}
+
+func GetStudentPointRecords(c *gin.Context) {
+	id := c.Param("id")
+
+	db := database.GetDB()
+	var student models.Student
+	if err := db.First(&student, "student_id = ?", id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "学生不存在"})
+		return
+	}
+
+	records, err := points.NewService(db).ListStudentPointRecords(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取兑奖积分明细失败"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"student_id":    id,
+		"redeem_points": student.RedeemPoints,
+		"point_records": records,
+	})
 }
 
 // GetContests 获取比赛列表

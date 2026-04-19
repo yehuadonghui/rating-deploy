@@ -16,6 +16,7 @@ type Student struct {
 	CurrentRating float64   `gorm:"default:0" json:"current_rating"`
 	MaxRating     float64   `gorm:"default:0" json:"max_rating"`
 	MatchCount    int       `gorm:"default:0" json:"match_count"`
+	RedeemPoints  int       `gorm:"default:0" json:"redeem_points"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 	Results       []Result  `gorm:"foreignKey:StudentID" json:"results,omitempty"`

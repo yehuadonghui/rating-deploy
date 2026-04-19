@@ -5,6 +5,7 @@ import AdminLayout from "./pages/admin/Layout"
 import AdminLogin from "./pages/admin/Login"
 import AdminContests from "./pages/admin/Contests"
 import AdminStudents from "./pages/admin/Students"
+import AdminPointRecords from "./pages/admin/PointRecords"
 import AdminLab from "./pages/admin/Lab"
 import AdminTiers from "./pages/admin/Tiers"
 import AdminSiteConfig from "./pages/admin/SiteConfig"
@@ -102,6 +103,14 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AdminStudents />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="points"
+          element={
+            <ProtectedRoute>
+              <AdminPointRecords />
             </ProtectedRoute>
           }
         />
